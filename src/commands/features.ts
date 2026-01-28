@@ -1,130 +1,47 @@
-/* =========================================================
-   /FEATURES COMMAND
-   ---------------------------------------------------------
-   - Shows free vs premium features
-   - Auto-derived from command registry
-   - Explains tier requirements clearly
-   - SaaS-grade discoverability
-   ========================================================= */
+import { ChatInputCommandInteraction, SlashCommandBuilder } from "discord.js";
+import { infoEmbed } from "../ui/embeds";
+import { CommandRegistry } from "../core/commandRegistry";
+import { PrismaClient } from "@prisma/client";
 
-import { ChatInputCommandInteraction, EmbedBuilder } from "discord.js"
-import {
-  COMMAND_REGISTRY,
-  CommandCategory,
-  CommandDefinition
-} from "../core/commandRegistry"
-import { SubscriptionTier } from "@prisma/client"
-import { checkSubscription } from "../subscription/subscriptionGuard"
+export const data = new SlashCommandBuilder()
+  .setName("features")
+  .setDescription("See all features, free vs premium");
 
-/* =========================================================
-   COMMAND HANDLER
-   ========================================================= */
+// Optional: Inject registry for permission/premium checks
+export async function execute(interaction: ChatInputCommandInteraction) {
+  const prisma = new PrismaClient();
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
 
-export async function handleFeaturesCommand(
-  interaction: ChatInputCommandInteraction
-) {
-  const userId = interaction.user.id
-  const guildId = interaction.guild?.id ?? "DM"
-
-  const embeds: EmbedBuilder[] = []
-
-  for (const category of Object.values(CommandCategory)) {
-    const commands = COMMAND_REGISTRY.filter(
-      c => c.category === category && !c.hidden
-    )
-
-    if (commands.length === 0) continue
-
-    const embed = new EmbedBuilder()
-      .setTitle(`✨ ${category} Features`)
-      .setColor(0x5865f2)
-
-    let description = ""
-
-    for (const command of commands) {
-      const status = await getFeatureStatus(
-        command,
-        userId,
-        guildId
-      )
-      description += formatFeatureLine(command, status)
-    }
-
-    embed.setDescription(description)
-    embeds.push(embed)
+  let subscription;
+  try {
+    subscription = await prisma.subscription.findUnique({
+      where: { guildId },
+    });
+  } catch (err) {
+    console.error("Failed to fetch subscription:", err);
   }
 
-  embeds.push(
-    new EmbedBuilder()
-      .setTitle("💎 Want more power?")
-      .setDescription(
-        [
-          "Upgrade to unlock advanced security, moderation, and control.",
-          "",
-          "👉 Use **/pricing** to compare plans",
-          "👉 Manage everything from the dashboard",
-          "",
-          "_Transparent pricing • Cancel anytime_"
-        ].join("\n")
-      )
-      .setColor(0x57f287)
-  )
+  const tier = subscription?.tier || "FREE";
+
+  const description =
+    "**Discord Governor — Features**\n\n" +
+    "**🆓 Free Tier**\n" +
+    "• Basic governance commands: `/help`, `/about`\n" +
+    "• Permission-verified execution\n" +
+    "• Basic audit logs\n" +
+    "• Standard rate limits\n\n" +
+    "**💎 Premium Tier**\n" +
+    "• Advanced role & authority control\n" +
+    "• Extended audit history\n" +
+    "• Higher execution & rate limits\n" +
+    "• Premium-only governance modules\n" +
+    "• Priority support & feature updates\n\n" +
+    `Your current tier: **${tier}**\n` +
+    "Use `/pricing` to upgrade and unlock full server potential.";
 
   await interaction.reply({
-    embeds,
-    ephemeral: true
-  })
-}
-
-/* =========================================================
-   FEATURE STATUS
-   ========================================================= */
-
-async function getFeatureStatus(
-  command: CommandDefinition,
-  userId: string,
-  guildId: string
-): Promise<{
-  locked: boolean
-  reason?: string
-}> {
-  if (
-    !command.requiredTier ||
-    command.requiredTier === SubscriptionTier.FREE
-  ) {
-    return { locked: false }
-  }
-
-  const sub = await checkSubscription({
-    guildId,
-    userId,
-    requiredTier: command.requiredTier
-  })
-
-  if (!sub.allowed) {
-    return {
-      locked: true,
-      reason: `${command.requiredTier} plan`
-    }
-  }
-
-  return { locked: false }
-}
-
-/* =========================================================
-   RENDERING
-   ========================================================= */
-
-function formatFeatureLine(
-  command: CommandDefinition,
-  status: { locked: boolean; reason?: string }
-): string {
-  let line = `• **${command.name}** — ${command.description}`
-
-  if (status.locked) {
-    line += ` 🔒 _Requires ${status.reason}_`
-  }
-
-  line += "\n"
-  return line
+    embeds: [infoEmbed("Features Overview", description)],
+    ephemeral: true,
+  });
 }
