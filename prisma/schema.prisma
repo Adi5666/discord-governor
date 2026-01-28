@@ -1,0 +1,176 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//////////////////////////////////////
+// ENUMS
+//////////////////////////////////////
+
+enum GlobalRole {
+  BOT_OWNER
+  BOT_ADMIN
+  BOT_MODERATOR
+}
+
+enum ServerRoleType {
+  OWNER
+  ADMIN
+  MODERATOR
+  CUSTOM
+}
+
+enum SubscriptionTier {
+  FREE
+  PRO
+  ELITE
+}
+
+enum AuditAction {
+  ROLE_ASSIGNED
+  ROLE_REVOKED
+  PERMISSION_GRANTED
+  PERMISSION_REVOKED
+  SUBSCRIPTION_CHANGED
+  SECURITY_OVERRIDE
+  COMMAND_EXECUTED
+}
+
+//////////////////////////////////////
+// CORE USER (DISCORD USER)
+//////////////////////////////////////
+
+model User {
+  id            String   @id @default(cuid())
+  discordId     String   @unique
+  globalRole    GlobalRole?
+  createdAt     DateTime @default(now())
+
+  memberships   ServerMember[]
+  subscriptions UserSubscription[]
+  auditLogs     AuditLog[]
+}
+
+//////////////////////////////////////
+// DISCORD SERVER
+//////////////////////////////////////
+
+model Server {
+  id            String   @id @default(cuid())
+  discordId     String   @unique
+  ownerDiscordId String
+  createdAt     DateTime @default(now())
+
+  members       ServerMember[]
+  roles         ServerRole[]
+  subscriptions ServerSubscription[]
+  auditLogs     AuditLog[]
+}
+
+//////////////////////////////////////
+// SERVER MEMBERSHIP
+//////////////////////////////////////
+
+model ServerMember {
+  id        String   @id @default(cuid())
+  userId    String
+  serverId  String
+
+  joinedAt  DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
+  server    Server   @relation(fields: [serverId], references: [id])
+
+  assignedRoles ServerRoleAssignment[]
+
+  @@unique([userId, serverId])
+}
+
+//////////////////////////////////////
+// SERVER ROLES (DASHBOARD CONTROLLED)
+//////////////////////////////////////
+
+model ServerRole {
+  id              String         @id @default(cuid())
+  serverId        String
+  discordRoleId   String         @unique
+  name            String
+  type            ServerRoleType
+  priority        Int            @default(0)
+
+  // Security flags
+  canManageBot    Boolean        @default(false)
+  canAssignRoles  Boolean        @default(false)
+  canBypassChecks Boolean        @default(false)
+
+  server          Server         @relation(fields: [serverId], references: [id])
+  assignments     ServerRoleAssignment[]
+}
+
+//////////////////////////////////////
+// ROLE ASSIGNMENTS
+//////////////////////////////////////
+
+model ServerRoleAssignment {
+  id              String   @id @default(cuid())
+  serverMemberId  String
+  serverRoleId    String
+  assignedById    String?
+
+  assignedAt      DateTime @default(now())
+
+  serverMember    ServerMember @relation(fields: [serverMemberId], references: [id])
+  serverRole      ServerRole   @relation(fields: [serverRoleId], references: [id])
+}
+
+//////////////////////////////////////
+// SUBSCRIPTIONS
+//////////////////////////////////////
+
+model ServerSubscription {
+  id          String           @id @default(cuid())
+  serverId    String
+  tier        SubscriptionTier
+  active      Boolean          @default(true)
+  startedAt  DateTime         @default(now())
+  endsAt     DateTime?
+
+  server      Server           @relation(fields: [serverId], references: [id])
+
+  @@unique([serverId])
+}
+
+model UserSubscription {
+  id          String           @id @default(cuid())
+  userId      String
+  tier        SubscriptionTier
+  active      Boolean          @default(true)
+  startedAt  DateTime         @default(now())
+  endsAt     DateTime?
+
+  user        User             @relation(fields: [userId], references: [id])
+
+  @@unique([userId])
+}
+
+//////////////////////////////////////
+// AUDIT LOGGING (NO LOOPHOLES)
+//////////////////////////////////////
+
+model AuditLog {
+  id          String       @id @default(cuid())
+  action      AuditAction
+  description String
+
+  userId      String?
+  serverId    String?
+
+  createdAt   DateTime     @default(now())
+
+  user        User?        @relation(fields: [userId], references: [id])
+  server      Server?      @relation(fields: [serverId], references: [id])
+}
