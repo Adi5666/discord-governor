@@ -1,116 +1,82 @@
-/* =========================================================
-   DISCORD GOVERNOR — ENTRY POINT
-   ---------------------------------------------------------
-   - Initializes client
-   - Registers commands
-   - Routes execution safely
-   ========================================================= */
+import "dotenv/config";
+import { Client, GatewayIntentBits, Partials } from "discord.js";
+import { PrismaClient } from "@prisma/client";
 
-import "dotenv/config"
-import {
-  Client,
-  GatewayIntentBits,
-  Interaction
-} from "discord.js"
+import { startHealthServer, registerHealthDependencies } from "./health/server";
+import { registerCommands } from "./core/commandRegistry";
 
-import {
-  COMMAND_REGISTRY
-} from "./core/commandRegistry"
-
-import {
-  executeCommand
-} from "./core/commandExecutor"
-
-import {
-  PermissionContext
-} from "./security/permissionResolver"
-
-/* =========================================================
-   ENV VALIDATION
-   ========================================================= */
-
-const REQUIRED_ENV = [
-  "DISCORD_TOKEN",
-  "BOT_OWNER_IDS"
-]
-
-for (const key of REQUIRED_ENV) {
-  if (!process.env[key]) {
-    throw new Error(`Missing env variable: ${key}`)
-  }
+// -----------------------------
+// ENV VALIDATION (FAIL FAST)
+// -----------------------------
+if (!process.env.DISCORD_TOKEN) {
+  throw new Error("DISCORD_TOKEN is missing in environment variables");
 }
 
-const BOT_OWNER_IDS =
-  process.env.BOT_OWNER_IDS!.split(",")
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is missing in environment variables");
+}
 
-/* =========================================================
-   CLIENT
-   ========================================================= */
+// -----------------------------
+// INITIALIZE CORE SERVICES
+// -----------------------------
+const prisma = new PrismaClient();
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers
-  ]
-})
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+  ],
+  partials: [Partials.Channel],
+});
 
-/* =========================================================
-   PERMISSION CONTEXT BUILDER
-   ========================================================= */
+// -----------------------------
+// DISCORD EVENTS
+// -----------------------------
+client.once("ready", async () => {
+  console.log(`✅ Logged in as ${client.user?.tag}`);
 
-client.permissionContextBuilder = (
-  guild,
-  member
-): PermissionContext => {
-  return {
-    guild,
-    member,
-    botOwners: BOT_OWNER_IDS,
-    botAdmins: [],       // later from DB
-    botModerators: []    // later from DB
+  try {
+    await prisma.$connect();
+    console.log("✅ Database connected");
+
+    await registerCommands(client);
+    console.log("✅ Commands registered");
+  } catch (err) {
+    console.error("❌ Startup failure:", err);
+    process.exit(1);
+  }
+});
+
+// -----------------------------
+// GLOBAL ERROR VISIBILITY
+// -----------------------------
+client.on("error", (err) => {
+  console.error("❌ Discord client error:", err);
+});
+
+client.on("shardError", (err) => {
+  console.error("❌ Discord shard error:", err);
+});
+
+// -----------------------------
+// BOOTSTRAP
+// -----------------------------
+async function bootstrap() {
+  try {
+    // Inject dependencies for graceful shutdown
+    registerHealthDependencies(prisma, client);
+
+    // Start health server BEFORE login
+    startHealthServer();
+
+    // Login to Discord
+    await client.login(process.env.DISCORD_TOKEN);
+  } catch (err) {
+    console.error("❌ Fatal bootstrap error:", err);
+    await prisma.$disconnect();
+    process.exit(1);
   }
 }
 
-/* =========================================================
-   READY
-   ========================================================= */
-
-client.once("ready", async () => {
-  console.log(
-    `✅ Governor online as ${client.user?.tag}`
-  )
-
-  console.log(
-    `📦 Loaded ${COMMAND_REGISTRY.length} commands`
-  )
-})
-
-/* =========================================================
-   INTERACTION HANDLER
-   ========================================================= */
-
-client.on(
-  "interactionCreate",
-  async (interaction: Interaction) => {
-    if (!interaction.isChatInputCommand()) return
-
-    const command = COMMAND_REGISTRY.find(
-      c => c.name === interaction.commandName
-    )
-
-    if (!command) {
-      return interaction.reply({
-        content: "Unknown command.",
-        ephemeral: true
-      })
-    }
-
-    await executeCommand(interaction, command)
-  }
-)
-
-/* =========================================================
-   LOGIN
-   ========================================================= */
-
-client.login(process.env.DISCORD_TOKEN)
+bootstrap();
